@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ORIGIN="orchestrator"
+COLOR_ORIGIN="\033[90m"
 COLOR_RESET="\033[0m"
-COLOR_STEP="\033[36m"
-COLOR_INFO="\033[32m"
-COLOR_WARN="\033[33m"
-COLOR_ERROR="\033[31m"
 
 color_enabled() {
   [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
@@ -17,18 +15,12 @@ log_with_color() {
   local message="$*"
   local ts
   ts="$(date +"%Y-%m-%d %H:%M:%S")"
-  local prefix="[$ts] [$level]"
-  local color=""
-  case "$level" in
-    STEP) color="$COLOR_STEP" ;;
-    INFO) color="$COLOR_INFO" ;;
-    WARN) color="$COLOR_WARN" ;;
-    ERROR) color="$COLOR_ERROR" ;;
-  esac
-  if color_enabled && [[ -n "$color" ]]; then
-    echo -e "${color}${prefix}${COLOR_RESET} ${message}"
+  local prefix="[$ts] [$level] [$ORIGIN]"
+  local line="${prefix} ${message}"
+  if color_enabled; then
+    echo -e "${COLOR_ORIGIN}${line}${COLOR_RESET}"
   else
-    echo "${prefix} ${message}"
+    echo "${line}"
   fi
 }
 

@@ -6,7 +6,8 @@ This repo demonstrates a fixed-size, file-backed volume for nested containers in
 Docker-in-Docker (DIND) environment. The "edge_node" container is privileged and
 hosts a Docker daemon that runs a non-privileged "external_container" app. The app
 writes 10 MB batches to a bind-mounted directory until the volume is full, proving
-ENOSPC behavior and cleanup correctness.
+ENOSPC behavior. The edge_node then logs volume stats and re-runs the app to show
+that the volume contents persist across container runs.
 
 ## Theory and approach (why it works)
 
@@ -31,7 +32,9 @@ is intentionally simple and deterministic.
   - starts dockerd
   - provisions a fixed-size volume via loop device
   - runs external_container with a bind mount to the fixed-size volume
+  - logs volume stats after the first run and re-launches the app to prove persistence
 - external_container (non-privileged app)
+  - logs existing volume contents on startup
   - writes 10 MB files until ENOSPC
   - logs the "volume full" message and exits cleanly
 
@@ -59,8 +62,14 @@ The inner container sees the bind mount at:
 ## Logging
 
 All scripts define `log_with_color` and emit maximally detailed logs. Each log line
-includes timestamp + level and details such as inputs, paths, image tags, volume
-sizes, and exit codes. Color can be disabled via `NO_COLOR=1` or `TERM=dumb`.
+includes timestamp + level + origin and details such as inputs, paths, image tags,
+volume sizes, and exit codes. The entire line is colored by origin:
+
+- external_container: magenta
+- edge_node: white
+- orchestrator/full_test: gray
+
+Color can be disabled via `NO_COLOR=1` or `TERM=dumb`.
 
 ## How to run (end-to-end)
 
@@ -78,6 +87,8 @@ This script:
 
 - The external container logs show `df -h` for the target mount (~100 MB).
 - Writes stop with "No space left on device; volume is full".
+- The external container logs existing volume contents at startup.
+- The edge_node logs volume stats after run 1 and re-runs the app to show persistence.
 - The edge node unmounts and detaches the loop device at cleanup.
 - `full_test.sh` ends with PASS and writes `artifacts/orchestrate.log`.
 
