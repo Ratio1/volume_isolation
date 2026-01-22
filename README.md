@@ -62,7 +62,7 @@ The inner container sees the bind mount at:
 ## Logging
 
 All scripts define `log_with_color` and emit maximally detailed logs. Each log line
-includes timestamp + level + origin and details such as inputs, paths, image tags,
+includes timestamp + origin + level and details such as inputs, paths, image tags,
 volume sizes, and exit codes. The entire line is colored by origin:
 
 - external_container: magenta

@@ -15,7 +15,7 @@ log_with_color() {
   local message="$*"
   local ts
   ts="$(date +"%Y-%m-%d %H:%M:%S")"
-  local prefix="[$ts] [$level] [$ORIGIN]"
+  local prefix="[$ts] [$ORIGIN] [$level]"
   local line="${prefix} ${message}"
   if color_enabled; then
     echo -e "${COLOR_ORIGIN}${line}${COLOR_RESET}"

@@ -49,7 +49,7 @@ def log_with_color(level: str, message: str) -> None:
   """
   level = level.upper()
   ts = time.strftime("%Y-%m-%d %H:%M:%S")
-  prefix = f"[{ts}] [{level}] [{ORIGIN}]"
+  prefix = f"[{ts}] [{ORIGIN}] [{level}]"
   line = f"{prefix} {message}"
   if _color_enabled():
     line = f"{COLOR_ORIGIN}{line}{COLOR_RESET}"
