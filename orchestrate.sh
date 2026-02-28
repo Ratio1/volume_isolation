@@ -3,10 +3,11 @@ set -euo pipefail
 
 ORIGIN="orchestrator"
 COLOR_ORIGIN="\033[90m"
+COLOR_STAGE="\033[94m"
 COLOR_RESET="\033[0m"
 
 color_enabled() {
-  [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
+  [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
 }
 
 log_with_color() {
@@ -18,13 +19,46 @@ log_with_color() {
   local prefix="[$ts] [$ORIGIN] [$level]"
   local line="${prefix} ${message}"
   if color_enabled; then
-    echo -e "${COLOR_ORIGIN}${line}${COLOR_RESET}"
+    local color="${COLOR_ORIGIN}"
+    if [[ "${level^^}" == "STEP" && ! "${message}" == Running\ * && ! "${message}" == Executing\ * ]]; then
+      color="${COLOR_STAGE}"
+    fi
+    echo -e "${color}${line}${COLOR_RESET}"
   else
     echo "${line}"
   fi
 }
 
 trap 'log_with_color ERROR "Command failed rc=$? line=$LINENO cmd=$BASH_COMMAND"' ERR
+
+run_quiet_or_fail() {
+  local action="$1"
+  shift
+  local log_file
+  local safe_action
+  safe_action="$(printf '%s' "${action}" | tr -cs 'A-Za-z0-9._-' '_')"
+  log_file="$(mktemp "/tmp/${ORIGIN}_${safe_action}.XXXX.log")"
+
+  set +e
+  "$@" >"${log_file}" 2>&1
+  local rc=$?
+  set -e
+
+  if [[ "${rc}" -eq 0 ]]; then
+    log_with_color INFO "${action} complete rc=0"
+    rm -f "${log_file}"
+    return 0
+  fi
+
+  local reason
+  reason="$(grep -v '^[[:space:]]*$' "${log_file}" | tail -n 1 || true)"
+  if [[ -z "${reason}" ]]; then
+    reason="No error details captured"
+  fi
+  log_with_color ERROR "${action} failed rc=${rc} reason=${reason}"
+  log_with_color ERROR "build/push logs saved path=${log_file}"
+  return "${rc}"
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_NAME="ratio1/volume_isolation"
@@ -110,34 +144,29 @@ if [[ "${LOGGED_IN}" -ne 1 ]]; then
 fi
 
 log_with_color STEP "Building external image"
-log_with_color INFO "docker build tag=${EXTERNAL_TAG} dockerfile=${EXTERNAL_DOCKERFILE} context=${EXTERNAL_DIR}"
-docker build -t "${EXTERNAL_TAG}" -f "${EXTERNAL_DOCKERFILE}" "${EXTERNAL_DIR}"
-log_with_color INFO "External image build complete tag=${EXTERNAL_TAG} rc=$?"
+run_quiet_or_fail \
+  "External image build tag=${EXTERNAL_TAG}" \
+  docker build -t "${EXTERNAL_TAG}" -f "${EXTERNAL_DOCKERFILE}" "${EXTERNAL_DIR}"
 
 log_with_color STEP "Pushing external image"
-log_with_color INFO "docker push tag=${EXTERNAL_TAG}"
-docker push "${EXTERNAL_TAG}"
-log_with_color INFO "External image push complete tag=${EXTERNAL_TAG} rc=$?"
+run_quiet_or_fail \
+  "External image push tag=${EXTERNAL_TAG}" \
+  docker push "${EXTERNAL_TAG}"
 
 log_with_color STEP "Building edge_node image"
-log_with_color INFO "docker build tag=${EDGE_TAG} dockerfile=${EDGE_DOCKERFILE} context=${EDGE_DIR}"
-docker build -t "${EDGE_TAG}" -f "${EDGE_DOCKERFILE}" "${EDGE_DIR}"
-log_with_color INFO "Edge_node image build complete tag=${EDGE_TAG} rc=$?"
+run_quiet_or_fail \
+  "Edge_node image build tag=${EDGE_TAG}" \
+  docker build -t "${EDGE_TAG}" -f "${EDGE_DOCKERFILE}" "${EDGE_DIR}"
 
 log_with_color STEP "Pushing edge_node image"
-log_with_color INFO "docker push tag=${EDGE_TAG}"
-docker push "${EDGE_TAG}"
-log_with_color INFO "Edge_node image push complete tag=${EDGE_TAG} rc=$?"
+run_quiet_or_fail \
+  "Edge_node image push tag=${EDGE_TAG}" \
+  docker push "${EDGE_TAG}"
 
 log_with_color STEP "Running edge_node container"
-RUN_ENV_ARGS=()
-if [[ -n "${NO_COLOR:-}" ]]; then
-  RUN_ENV_ARGS+=("-e" "NO_COLOR=1")
-  log_with_color INFO "Passing NO_COLOR=1 into container"
-fi
-log_with_color INFO "docker run --rm --privileged --name edge_node ${RUN_ENV_ARGS[*]} ${EDGE_TAG}"
+log_with_color INFO "docker run --rm --privileged --name edge_node ${EDGE_TAG}"
 set +e
-docker run --rm --privileged --name edge_node "${RUN_ENV_ARGS[@]}" "${EDGE_TAG}"
+docker run --rm --privileged --name edge_node "${EDGE_TAG}"
 RUN_RC=$?
 set -e
 log_with_color INFO "edge_node container finished rc=${RUN_RC}"

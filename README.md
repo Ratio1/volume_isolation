@@ -6,8 +6,9 @@ This repo demonstrates a fixed-size, file-backed volume for nested containers in
 Docker-in-Docker (DIND) environment. The "edge_node" container is privileged and
 hosts a Docker daemon that runs a non-privileged "external_container" app. The app
 writes 10 MB batches to a bind-mounted directory until the volume is full, proving
-ENOSPC behavior. The edge_node then logs volume stats and re-runs the app to show
-that the volume contents persist across container runs.
+ENOSPC behavior. The edge_node runs two isolated cycles, where each cycle mounts,
+runs, logs stats, and then unmounts/detaches; cycle 2 proves data persistence by
+re-mounting the same image file and observing existing data.
 
 ## Theory and approach (why it works)
 
@@ -30,9 +31,10 @@ is intentionally simple and deterministic.
 
 - edge_node (privileged DIND container)
   - starts dockerd
-  - provisions a fixed-size volume via loop device
-  - runs external_container with a bind mount to the fixed-size volume
-  - logs volume stats after the first run and re-launches the app to prove persistence
+  - performs 2 isolated cycles: provision/mount -> run external_container -> log volume state -> unmount/detach
+  - uses a per-run external container scope name `external_app_<4hex>` for container + volume paths
+  - on cycle 2, re-provisions from the existing image and logs pre-existing files
+  - prints `=============================` between cycles for readability
 - external_container (non-privileged app)
   - logs existing volume contents on startup
   - writes 10 MB files until ENOSPC
@@ -57,19 +59,22 @@ The edge node stores one file per volume and mounts it via loop device:
 
 The inner container sees the bind mount at:
 
-- `/edge_node/external_container_fixed_size_volume/`
+- `/external_container/fixed_size_volume/`
 
 ## Logging
 
 All scripts define `log_with_color` and emit maximally detailed logs. Each log line
 includes timestamp + origin + level and details such as inputs, paths, image tags,
-volume sizes, and exit codes. The entire line is colored by origin:
+volume sizes, and exit codes. Stage-oriented `STEP` logs are blue to make boundaries
+obvious, while action-oriented `STEP` messages that start with `Running`/`Executing`
+use origin color. Non-`STEP` logs are colored by origin:
 
-- external_container: magenta
+- external app (`external_app_<4hex>`): magenta
 - edge_node: white
 - orchestrator/full_test: gray
 
-Color can be disabled via `NO_COLOR=1` or `TERM=dumb`.
+Color is enabled by default (including piped logs) and can be disabled via
+`NO_COLOR=1` or `TERM=dumb`.
 
 ## How to run (end-to-end)
 
@@ -88,8 +93,11 @@ This script:
 - The external container logs show `df -h` for the target mount (~100 MB).
 - Writes stop with "No space left on device; volume is full".
 - The external container logs existing volume contents at startup.
-- The edge_node logs volume stats after run 1 and re-runs the app to show persistence.
-- The edge node unmounts and detaches the loop device at cleanup.
+- The edge_node logs volume stats before and after each run.
+- The edge node unmounts and detaches the loop device after each cycle.
+- After unmount/detach, edge_node runs `ls -la` on the previous mount path as proof.
+- After unmount/detach, edge_node also runs `ls -la` on the image folder as proof.
+- Cycle 2 starts by re-mounting the existing image and showing prior data.
 - `full_test.sh` ends with PASS and writes `artifacts/orchestrate.log`.
 
 ## Troubleshooting

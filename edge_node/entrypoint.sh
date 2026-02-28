@@ -3,10 +3,11 @@ set -euo pipefail
 
 ORIGIN="edge_node"
 COLOR_ORIGIN="\033[97m"
+COLOR_STAGE="\033[94m"
 COLOR_RESET="\033[0m"
 
 color_enabled() {
-  [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
+  [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
 }
 
 log_with_color() {
@@ -18,7 +19,11 @@ log_with_color() {
   local prefix="[$ts] [$ORIGIN] [$level]"
   local line="${prefix} ${message}"
   if color_enabled; then
-    echo -e "${COLOR_ORIGIN}${line}${COLOR_RESET}"
+    local color="${COLOR_ORIGIN}"
+    if [[ "${level^^}" == "STEP" && ! "${message}" == Running\ * && ! "${message}" == Executing\ * ]]; then
+      color="${COLOR_STAGE}"
+    fi
+    echo -e "${color}${line}${COLOR_RESET}"
   else
     echo "${line}"
   fi

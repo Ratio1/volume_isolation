@@ -3,10 +3,11 @@ set -euo pipefail
 
 ORIGIN="full_test"
 COLOR_ORIGIN="\033[90m"
+COLOR_STAGE="\033[94m"
 COLOR_RESET="\033[0m"
 
 color_enabled() {
-  [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
+  [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]
 }
 
 log_with_color() {
@@ -18,7 +19,11 @@ log_with_color() {
   local prefix="[$ts] [$ORIGIN] [$level]"
   local line="${prefix} ${message}"
   if color_enabled; then
-    echo -e "${COLOR_ORIGIN}${line}${COLOR_RESET}"
+    local color="${COLOR_ORIGIN}"
+    if [[ "${level^^}" == "STEP" && ! "${message}" == Running\ * && ! "${message}" == Executing\ * ]]; then
+      color="${COLOR_STAGE}"
+    fi
+    echo -e "${color}${line}${COLOR_RESET}"
   else
     echo "${line}"
   fi
@@ -32,7 +37,7 @@ mkdir -p "${LOG_DIR}"
 log_with_color STEP "Wrapper starting log_file=${LOG_FILE}"
 
 set +e
-NO_COLOR=1 "${SCRIPT_DIR}/orchestrate.sh" 2>&1 | tee "${LOG_FILE}"
+"${SCRIPT_DIR}/orchestrate.sh" 2>&1 | tee "${LOG_FILE}"
 ORCH_RC=${PIPESTATUS[0]}
 set -e
 
@@ -43,6 +48,16 @@ if [[ "${ORCH_RC}" -ne 0 ]]; then
 fi
 
 EXPECTED_PATTERNS=(
+  "============================="
+  "Starting isolated cycle run=1; provisioning and mounting volume"
+  "Cycle complete; unmounting and detaching loop device run=1"
+  "Post-unmount directory proof run=1"
+  "Post-unmount image-folder proof run=1"
+  "Starting isolated cycle run=2; provisioning and mounting volume"
+  "Mounted volume state before external run run=2"
+  "Cycle complete; unmounting and detaching loop device run=2"
+  "Post-unmount directory proof run=2"
+  "Post-unmount image-folder proof run=2"
   "Volume provisioned"
   "No space left on device; volume is full"
   "Edge node runner completed successfully"

@@ -8,7 +8,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Dict, Optional
 
 ORIGIN = "edge_node"
 COLOR_ORIGIN = "\033[97m"
+COLOR_STAGE = "\033[94m"
 COLOR_RESET = "\033[0m"
 
 
@@ -29,7 +29,7 @@ def _color_enabled() -> bool:
   """
   if os.getenv("NO_COLOR") or os.getenv("TERM") == "dumb":
     return False
-  return sys.stdout.isatty()
+  return True
 
 
 def log_with_color(level: str, message: str) -> None:
@@ -51,7 +51,9 @@ def log_with_color(level: str, message: str) -> None:
   prefix = f"[{ts}] [{ORIGIN}] [{level}]"
   line = f"{prefix} {message}"
   if _color_enabled():
-    line = f"{COLOR_ORIGIN}{line}{COLOR_RESET}"
+    is_action = message.startswith("Running ") or message.startswith("Executing ")
+    color = COLOR_STAGE if level == "STEP" and not is_action else COLOR_ORIGIN
+    line = f"{color}{line}{COLOR_RESET}"
   print(line, flush=True)
 
 

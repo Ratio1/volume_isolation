@@ -14,8 +14,9 @@ import sys
 import time
 from pathlib import Path
 
-ORIGIN = "external_container"
+ORIGIN = os.getenv("LOG_ORIGIN", "external_container")
 COLOR_ORIGIN = "\033[35m"
+COLOR_STAGE = "\033[94m"
 COLOR_RESET = "\033[0m"
 
 
@@ -29,7 +30,7 @@ def _color_enabled() -> bool:
   """
   if os.getenv("NO_COLOR") or os.getenv("TERM") == "dumb":
     return False
-  return sys.stdout.isatty()
+  return True
 
 
 def log_with_color(level: str, message: str) -> None:
@@ -51,7 +52,9 @@ def log_with_color(level: str, message: str) -> None:
   prefix = f"[{ts}] [{ORIGIN}] [{level}]"
   line = f"{prefix} {message}"
   if _color_enabled():
-    line = f"{COLOR_ORIGIN}{line}{COLOR_RESET}"
+    is_action = message.startswith("Running ") or message.startswith("Executing ")
+    color = COLOR_STAGE if level == "STEP" and not is_action else COLOR_ORIGIN
+    line = f"{color}{line}{COLOR_RESET}"
   print(line, flush=True)
 
 
@@ -147,7 +150,7 @@ def main() -> int:
       Exit code for the process.
   """
   target_dir = Path(
-    os.getenv("TARGET_DIR", "/edge_node/external_container_fixed_size_volume")
+    os.getenv("TARGET_DIR", "/external_container/fixed_size_volume")
   )
   chunk_size = 1024 * 1024
   chunks_per_file = 10

@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,7 @@ from fixed_volume import FixedVolume, cleanup, docker_bind_spec, provision
 
 ORIGIN = "edge_node"
 COLOR_ORIGIN = "\033[97m"
+COLOR_STAGE = "\033[94m"
 COLOR_RESET = "\033[0m"
 
 
@@ -30,7 +32,7 @@ def _color_enabled() -> bool:
   """
   if os.getenv("NO_COLOR") or os.getenv("TERM") == "dumb":
     return False
-  return sys.stdout.isatty()
+  return True
 
 
 def log_with_color(level: str, message: str) -> None:
@@ -52,7 +54,9 @@ def log_with_color(level: str, message: str) -> None:
   prefix = f"[{ts}] [{ORIGIN}] [{level}]"
   line = f"{prefix} {message}"
   if _color_enabled():
-    line = f"{COLOR_ORIGIN}{line}{COLOR_RESET}"
+    is_action = message.startswith("Running ") or message.startswith("Executing ")
+    color = COLOR_STAGE if level == "STEP" and not is_action else COLOR_ORIGIN
+    line = f"{color}{line}{COLOR_RESET}"
   print(line, flush=True)
 
 
@@ -155,6 +159,11 @@ def _log_volume_stats(mount_path: Path) -> None:
   _run_command(["ls", "-la", str(mount_path)], "ls -la")
 
 
+def _log_cycle_separator() -> None:
+  """Emit a visual separator between isolated cycles."""
+  log_with_color("INFO", "=============================")
+
+
 def _run_external_container(
   client: docker.DockerClient,
   image: str,
@@ -253,7 +262,8 @@ def main() -> int:
   int
       Exit code for the process.
   """
-  container_name = _safe_get_env("EXTERNAL_CONTAINER_NAME", "external_container_poc")
+  generated_container_name = f"external_app_{uuid.uuid4().hex[:4]}"
+  container_name = _safe_get_env("EXTERNAL_CONTAINER_NAME", generated_container_name)
   external_image = _safe_get_env(
     "EXTERNAL_IMAGE", "ratio1/volume_isolation:external_container"
   )
@@ -265,9 +275,8 @@ def main() -> int:
     )
   )
   target_dir = _safe_get_env(
-    "TARGET_DIR", "/edge_node/external_container_fixed_size_volume"
+    "TARGET_DIR", "/external_container/fixed_size_volume"
   )
-  no_color = _safe_get_env("NO_COLOR", "")
 
   log_with_color(
     "STEP",
@@ -303,57 +312,76 @@ def main() -> int:
   container: Optional[docker.models.containers.Container] = None
 
   try:
-    provisioned = provision(volume)
-    log_with_color(
-      "INFO",
-      "Volume provisioned "
-      f"img_path={provisioned.img_path} mount_path={provisioned.mount_path}",
-    )
+    external_env = {"TARGET_DIR": target_dir, "LOG_ORIGIN": container_name}
 
-    mounts = docker_bind_spec(provisioned, target_dir)
-    external_env = {"TARGET_DIR": target_dir}
-    if no_color:
-      external_env["NO_COLOR"] = "1"
+    for cycle in (1, 2):
+      run_label = f"run={cycle}"
+      _log_cycle_separator()
       log_with_color(
-        "INFO",
-        "NO_COLOR detected; passing NO_COLOR=1 to external container",
+        "STEP",
+        "Starting isolated cycle "
+        f"{run_label}; provisioning and mounting volume",
       )
 
-    # First run: fill the volume and trigger ENOSPC.
-    container, status_code = _run_external_container(
-      client,
-      external_image,
-      container_name,
-      target_dir,
-      mounts,
-      external_env,
-      "run=1",
-    )
-    _remove_container(container, container_name)
-    container = None
-    if status_code != 0:
-      raise RuntimeError(f"External container run=1 exited status_code={status_code}")
+      provisioned = provision(volume)
+      log_with_color(
+        "INFO",
+        "Volume provisioned "
+        f"img_path={provisioned.img_path} mount_path={provisioned.mount_path}",
+      )
 
-    # After the first run, log volume stats before re-launching to prove persistence.
-    _log_volume_stats(provisioned.mount_path)
+      log_with_color(
+        "STEP",
+        "Mounted volume state before external run "
+        f"{run_label} mount_path={provisioned.mount_path}",
+      )
+      _log_volume_stats(provisioned.mount_path)
 
-    log_with_color(
-      "STEP",
-      "Re-launching external container to verify volume persistence run=2",
-    )
-    container, status_code = _run_external_container(
-      client,
-      external_image,
-      container_name,
-      target_dir,
-      mounts,
-      external_env,
-      "run=2",
-    )
-    _remove_container(container, container_name)
-    container = None
-    if status_code != 0:
-      raise RuntimeError(f"External container run=2 exited status_code={status_code}")
+      mounts = docker_bind_spec(provisioned, target_dir)
+      container, status_code = _run_external_container(
+        client,
+        external_image,
+        container_name,
+        target_dir,
+        mounts,
+        external_env,
+        run_label,
+      )
+      _remove_container(container, container_name)
+      container = None
+      if status_code != 0:
+        raise RuntimeError(
+          f"External container {run_label} exited status_code={status_code}"
+        )
+
+      log_with_color(
+        "STEP",
+        "Mounted volume state after external run "
+        f"{run_label} mount_path={provisioned.mount_path}",
+      )
+      _log_volume_stats(provisioned.mount_path)
+
+      log_with_color(
+        "STEP",
+        "Cycle complete; unmounting and detaching loop device "
+        f"{run_label} mount_path={provisioned.mount_path}",
+      )
+      previous_mount_path = provisioned.mount_path
+      previous_image_dir = provisioned.img_path.parent
+      cleanup(provisioned)
+      log_with_color(
+        "STEP",
+        f"Post-unmount directory proof {run_label} mount_path={previous_mount_path}",
+      )
+      _run_command(["ls", "-la", str(previous_mount_path)], "ls -la post-unmount")
+      log_with_color(
+        "STEP",
+        f"Post-unmount image-folder proof {run_label} image_dir={previous_image_dir}",
+      )
+      _run_command(["ls", "-la", str(previous_image_dir)], "ls -la image-folder")
+      provisioned = None
+
+    _log_cycle_separator()
 
   except Exception as exc:
     log_with_color("ERROR", f"Runner failed error={exc}")
